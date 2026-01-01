@@ -18,231 +18,299 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Languages
+# Language Dictionary
 LANGUAGES = {
-    "🇺🇸 English": {"lang_code": "en-US", "straight": "Go straight", "right": "Turn right", "sharp_right": "Sharp right",
-                   "left": "Turn left", "sharp_left": "Sharp left", "done": "You have arrived!", "meters": "meters"},
-    "🇮🇳 Hindi": {"lang_code": "hi-IN", "straight": "सीधे चलें", "right": "दायें मुड़ें", "sharp_right": "तेज दायें",
-                  "left": "बायें मुड़ें", "sharp_left": "तेज बायें", "done": "आप पहुँच गए!", "meters": "मीटर"},
-    "🇮🇳 Telugu": {"lang_code": "te-IN", "straight": "నేరుగా వెళ్ళండి", "right": "కుడి మలుపు", "sharp_right": "తీవ్ర కుడి",
-                   "left": "ఎడమ మలుపు", "sharp_left": "తీవ్ర ఎడమ", "done": "మీరు చేరుకున్నారు!", "meters": "మీటర్లు"}
+    "🇺🇸 English": {
+        "lang_code": "en-US",
+        "straight": "Go straight ahead",
+        "right": "Turn right",
+        "sharp_right": "Turn sharply right",
+        "left": "Turn left",
+        "sharp_left": "Turn sharply left",
+        "done": "You have arrived at your destination!",
+        "meters": "meters"
+    },
+    "🇮🇳 Hindi": {
+        "lang_code": "hi-IN",
+        "straight": "सीधे चलें",
+        "right": "दाएँ मुड़ें",
+        "sharp_right": "तेज दाएँ मुड़ें",
+        "left": "बाएँ मुड़ें",
+        "sharp_left": "तेज बाएँ मुड़ें",
+        "done": "आप अपने गंतव्य पर पहुँच गए हैं!",
+        "meters": "मीटर"
+    },
+    "🇮🇳 Telugu": {
+        "lang_code": "te-IN",
+        "straight": "నేరుగా వెళ్లండి",
+        "right": "కుడి వైపు తిరగండి",
+        "sharp_right": "తీవ్రంగా కుడి మలుపు",
+        "left": "ఎడమ వైపు తిరగండి",
+        "sharp_left": "తీవ్రంగా ఎడమ మలుపు",
+        "done": "మీరు మీ గమ్యానికి చేరుకున్నారు!",
+        "meters": "మీటర్లు"
+    }
 }
 
 # Initialize session state
-defaults = {
-    'user_location': None,
-    'nearby_places': {},
-    'destination': None,
-    'route_steps': [],
-    'current_step_index': 0,
-    'selected_language': "🇺🇸 English"
-}
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+if 'user_location' not in st.session_state: st.session_state.user_location = None
+if 'nearby_places' not in st.session_state: st.session_state.nearby_places = {}
+if 'destination' not in st.session_state: st.session_state.destination = None
+if 'route_steps' not in st.session_state: st.session_state.route_steps = []
+if 'current_step_index' not in st.session_state: st.session_state.current_step_index = 0
+if 'selected_language' not in st.session_state: st.session_state.selected_language = "🇺🇸 English"
 
-# Helper functions (unchanged)
+# Haversine distance
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi, dlambda = math.radians(lat2-lat1), math.radians(lon2-lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
-    return 2*R*math.atan2(math.sqrt(a), math.sqrt(1-a))
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    a = math.sin(delta_phi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
 
+# Calculate bearing
 def get_bearing(lat1, lon1, lat2, lon2):
     lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
     dlon = lon2 - lon1
     y = math.sin(dlon) * math.cos(lat2)
-    x = math.cos(lat1)*math.sin(lat2) - math.sin(lat1)*math.cos(lat2)*math.cos(dlon)
-    return (math.degrees(math.atan2(y, x)) + 360) % 360
+    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    bearing = math.degrees(math.atan2(y, x))
+    return (bearing + 360) % 360
 
-def get_direction(lang, prev_b, next_b, dist):
-    diff = (next_b - prev_b + 360) % 360
-    L = LANGUAGES[lang]
-    if diff < 30 or diff > 330: return f"{L['straight']} ({int(dist)} {L['meters']})"
-    elif diff < 90: return f"{L['right']} ({int(dist)} {L['meters']})"
-    elif diff < 150: return f"{L['sharp_right']} ({int(dist)} {L['meters']})"
-    elif diff > 210: return f"{L['sharp_left']} ({int(dist)} {L['meters']})"
-    else: return f"{L['left']} ({int(dist)} {L['meters']})"
+# Determine turn direction
+def get_direction_text(lang, bearing_prev, bearing_next, distance):
+    diff = (bearing_next - bearing_prev + 360) % 360
+    lang_dict = LANGUAGES[lang]
+    
+    if diff < 20 or diff > 340:
+        direction = lang_dict["straight"]
+    elif 20 <= diff < 80:
+        direction = lang_dict["right"]
+    elif 80 <= diff < 160:
+        direction = lang_dict["sharp_right"]
+    elif 200 <= diff < 340:
+        direction = lang_dict["sharp_left"]
+    elif 160 <= diff <= 200:
+        direction = lang_dict["left"]
+    else:
+        direction = lang_dict["straight"]
+    
+    return f"{direction} ({int(distance)} {lang_dict['meters']})"
 
-def fetch_places(lat, lon):
+# Fetch nearby places
+def fetch_nearby_places(lat, lon, radius=600):
+    overpass_url = "https://overpass-api.de/api/interpreter"
+    query = f"""
+    [out:json][timeout:25];
+    (
+      node["amenity"](around:{radius},{lat},{lon});
+      node["shop"](around:{radius},{lat},{lon});
+      node["office"](around:{radius},{lat},{lon});
+    );
+    out center;
+    """
     try:
-        url = "https://overpass-api.de/api/interpreter"
-        query = f'[out:json][timeout:25];(node["amenity"](around:600,{lat},{lon});node["shop"](around:600,{lat},{lon}););out center;'
-        data = requests.get(url, params={'data': query}, timeout=10).json()
+        response = requests.get(overpass_url, params={'data': query}, timeout=10)
+        data = response.json()
         places = {}
-        for e in data.get('elements', [])[:12]:
-            tags = e.get('tags', {})
-            name = tags.get('name') or tags.get('amenity') or tags.get('shop') or 'Place'
-            center = e.get('center', e)
-            if center.get('lat') and center.get('lon'):
-                places[name] = [center['lat'], center['lon']]
-        return places or {"Nearby Place": [lat + 0.001, lon + 0.001]}
+        for elem in data.get('elements', []):
+            tags = elem.get('tags', {})
+            name = tags.get('name', tags.get('amenity', tags.get('shop', 'Place')))
+            lat_c = elem.get('lat') or elem.get('center', {}).get('lat')
+            lon_c = elem.get('lon') or elem.get('center', {}).get('lon')
+            if lat_c and lon_c:
+                places[name] = [float(lat_c), float(lon_c)]
+        return dict(list(places.items())[:12]) if places else {"No places found": [lat+0.001, lon+0.001]}
     except:
-        return {"Nearby Place": [lat + 0.001, lon + 0.001]}
+        return {"Sample Place": [lat+0.001, lon+0.001]}
 
-def generate_steps(start, end, lang):
-    dist = haversine(*start, *end)
-    if dist < 20: return [LANGUAGES[lang]["done"]]
+# Generate simulated route steps
+def generate_route_steps(start, end, lang):
     steps = []
-    n = max(4, min(10, int(dist // 30)))
-    prev_b = get_bearing(*start, *end)
-    for i in range(1, n):
-        ratio = i / n
-        mid = [start[0] + ratio * (end[0] - start[0]), start[1] + ratio * (end[1] - start[1])]
-        curr_b = get_bearing(*mid, *end)
-        steps.append(get_direction(lang, prev_b, curr_b, dist / n))
-        prev_b = curr_b
+    total_dist = haversine(*start, *end)
+    if total_dist < 15:
+        return [LANGUAGES[lang]["done"]]
+    
+    num_steps = max(4, min(10, int(total_dist // 25)))
+    waypoints = [start]
+    
+    for i in range(1, num_steps):
+        ratio = i / num_steps
+        offset = 0.00008 * math.sin(i * 1.8)
+        lat = start[0] + ratio * (end[0] - start[0]) + offset
+        lon = start[1] + ratio * (end[1] - start[1]) + offset * 0.6
+        waypoints.append([lat, lon])
+    waypoints.append(end)
+    
+    prev_bearing = get_bearing(*waypoints[0], *waypoints[1])
+    for i in range(1, len(waypoints)-1):
+        curr_bearing = get_bearing(*waypoints[i], *waypoints[i+1])
+        dist = haversine(*waypoints[i-1], *waypoints[i])
+        step = get_direction_text(lang, prev_bearing, curr_bearing, dist)
+        steps.append(step)
+        prev_bearing = curr_bearing
+    
     steps.append(LANGUAGES[lang]["done"])
     return steps
 
-def speak(text, lang_code):
-    escaped = text.replace("'", "\\'")
+# Speak full instruction
+def speak_full_instruction(text, lang_code):
+    escaped_text = text.replace('\\', '\\\\').replace('"', '\\"').replace("'", "\\'")
     js = f"""
     <script>
     if ('speechSynthesis' in window) {{
-        speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance('{escaped}');
-        utter.lang = '{lang_code}';
-        utter.rate = 0.9;
-        speechSynthesis.speak(utter);
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance("{escaped_text}");
+        utterance.lang = '{lang_code}';
+        utterance.rate = 0.95;
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
+        window.speechSynthesis.speak(utterance);
     }}
     </script>
     """
     components.html(js, height=0)
 
-# === TRUE AUTOMATIC LOCATION: Instant real GPS (no fallback, no waiting message) ===
+# === AUTOMATIC LOCATION DETECTION ===
 components.html("""
 <script>
-// Request location immediately and aggressively
 if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
-        pos => {
+        function(position) {
             Streamlit.setComponentValue({
-                lat: pos.coords.latitude,
-                lon: pos.coords.longitude
+                lat: position.coords.latitude,
+                lon: position.coords.longitude
             });
         },
-        err => {
-            // If denied or error, try again continuously until success
-            setTimeout(() => location.reload(), 2000);  // Soft reload to retry
+        function(error) {
+            console.log("Location error: " + error.message);
         },
-        {enableHighAccuracy: true, timeout: 5000, maximumAge: 0}
+        {enableHighAccuracy: true, timeout: 15000, maximumAge: 60000}
     );
 }
 </script>
 """, height=0)
 
-# Capture real location instantly
+# Capture the location from JavaScript
 if hasattr(st.session_state, "_st_component_value") and st.session_state._st_component_value:
     geo = st.session_state._st_component_value
-    if geo.get("lat") is not None and geo.get("lon") is not None:
+    if isinstance(geo, dict) and "lat" in geo and "lon" in geo:
         st.session_state.user_location = [geo["lat"], geo["lon"]]
-
-# If for any reason location not received yet, show clean loading (no warning)
-if st.session_state.user_location is None:
-    st.session_state.user_location = None  # Will show minimal spinner below
 
 # Header
 st.markdown('<h1 class="main-header">🧭 Smart Multi-Language Navigator</h1>', unsafe_allow_html=True)
 
 # Language Selection
-cols = st.columns(3)
-for i, (flag, _) in enumerate(LANGUAGES.items()):
-    with cols[i]:
-        if st.button(f"**{flag}**", use_container_width=True):
-            st.session_state.selected_language = flag
+st.markdown("### 🌐 Choose Language")
+lang_cols = st.columns(3)
+langs = list(LANGUAGES.keys())
+for i, lang_name in enumerate(langs):
+    with lang_cols[i]:
+        if st.button(f"**{lang_name}**", use_container_width=True):
+            st.session_state.selected_language = lang_name
             st.rerun()
 
-st.caption(f"Language: {st.session_state.selected_language}")
+st.markdown(f"**Selected:** {st.session_state.selected_language}")
 
-col1, col2 = st.columns([1, 1.2])
+# Main Layout
+col_left, col_right = st.columns([1, 1.2], gap="large")
 
-with col1:
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+with col_left:
     st.subheader("📍 Your Location")
 
     if st.session_state.user_location:
-        loc = st.session_state.user_location
-        st.success(f"✅ Location Ready\nLat: {loc[0]:.6f} | Lon: {loc[1]:.6f}")
+        lat, lon = st.session_state.user_location
+        st.success(f"✅ Location Detected Automatically\nLat: {lat:.6f} | Lon: {lon:.6f}")
     else:
-        with st.spinner("Getting your location instantly..."):
-            st.write("This takes just a second on mobile")
+        st.info("🔄 Detecting your location...\nAllow location permission when prompted (especially on mobile).")
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    if st.button("🔄 Retry Location Detection"):
+        st.rerun()
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("🎯 Nearby Places")
-
+    st.subheader("🎯 Find Nearby Places")
+    
     if st.session_state.user_location:
         if st.button("🔍 Search Nearby Places"):
             with st.spinner("Searching..."):
-                st.session_state.nearby_places = fetch_places(*st.session_state.user_location)
+                places = fetch_nearby_places(*st.session_state.user_location)
+                st.session_state.nearby_places = places
                 st.rerun()
-
+        
         if st.session_state.nearby_places:
-            choice = st.selectbox("Choose Destination", [""] + list(st.session_state.nearby_places.keys()))
-            if choice and st.button("🚀 Start Navigation"):
-                coords = st.session_state.nearby_places[choice]
-                st.session_state.destination = {"name": choice, "coords": coords}
-                st.session_state.route_steps = generate_steps(st.session_state.user_location, coords, st.session_state.selected_language)
+            selected = st.selectbox("Select Destination", [""] + list(st.session_state.nearby_places.keys()))
+            if selected and st.button("🚀 Start Navigation"):
+                coords = st.session_state.nearby_places[selected]
+                st.session_state.destination = {"name": selected, "coords": coords}
+                st.session_state.route_steps = generate_route_steps(
+                    st.session_state.user_location, coords, st.session_state.selected_language
+                )
                 st.session_state.current_step_index = 0
-                st.rerun()
-    else:
-        st.info("Location will be ready in a moment")
+                st.success(f"Route to {selected} ready!")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    if st.session_state.route_steps:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        idx = st.session_state.current_step_index
-        current = st.session_state.route_steps[idx]
+    # Navigation Control
+    if st.session_state.route_steps and st.session_state.current_step_index < len(st.session_state.route_steps):
+        st.subheader("🚶 Current Instruction")
+        
+        current = st.session_state.route_steps[st.session_state.current_step_index]
         st.markdown(f'<div class="direction-box">{current}</div>', unsafe_allow_html=True)
-
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("🔊 Speak"):
-                speak(current, LANGUAGES[st.session_state.selected_language]["lang_code"])
-        with c2:
+        
+        col_s1, col_s2 = st.columns(2)
+        with col_s1:
+            if st.button("🔊 Speak Full Instruction"):
+                lang_code = LANGUAGES[st.session_state.selected_language]["lang_code"]
+                speak_full_instruction(current, lang_code)
+        with col_s2:
             if st.button("➡️ Next Step"):
                 st.session_state.current_step_index += 1
                 st.rerun()
-
-        if st.button("🔄 Reset"):
-            st.session_state.route_steps = []
-            st.session_state.destination = None
+        
+        if st.button("🔄 Reset Route"):
             st.session_state.current_step_index = 0
+            st.session_state.destination = None
+            st.session_state.route_steps = []
             st.rerun()
+        
+        progress = (st.session_state.current_step_index + 1) / len(st.session_state.route_steps)
+        st.progress(progress)
+        st.markdown(f"**Step {st.session_state.current_step_index + 1} of {len(st.session_state.route_steps)}**")
 
-        st.progress((idx + 1) / len(st.session_state.route_steps))
-        st.markdown('</div>', unsafe_allow_html=True)
-
-with col2:
+with col_right:
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.subheader("🗺️ Map View")
-
+    
     if st.session_state.user_location:
-        m = folium.Map(location=st.session_state.user_location, zoom_start=17)
+        m = folium.Map(location=st.session_state.user_location, zoom_start=18)
         folium.Marker(
             st.session_state.user_location,
             popup="You are here",
             icon=folium.Icon(color="green", icon="user", prefix="fa")
         ).add_to(m)
-
+        
         if st.session_state.destination:
-            d = st.session_state.destination["coords"]
-            folium.Marker(d, popup=st.session_state.destination["name"],
-                         icon=folium.Icon(color="red", icon="flag-checkered", prefix="fa")).add_to(m)
-            folium.PolyLine([st.session_state.user_location, d], color="#00D4FF", weight=7, opacity=0.8).add_to(m)
-
+            dest_coords = st.session_state.destination["coords"]
+            folium.Marker(
+                dest_coords,
+                popup=st.session_state.destination["name"],
+                icon=folium.Icon(color="red", icon="flag", prefix="fa")
+            ).add_to(m)
+            folium.PolyLine(
+                [st.session_state.user_location, dest_coords],
+                color="#00D4FF", weight=8, opacity=0.8
+            ).add_to(m)
+        
         st_folium(m, width=700, height=500)
     else:
-        st.info("Map loading with your location...")
-
+        st.info("Set or allow location to view the map")
+    
     st.markdown('</div>', unsafe_allow_html=True)
 
-if st.session_state.route_steps and st.session_state.current_step_index >= len(st.session_state.route_steps) - 1:
+# Final status
+if st.session_state.route_steps and st.session_state.current_step_index >= len(st.session_state.route_steps):
     st.success("🎉 " + LANGUAGES[st.session_state.selected_language]["done"])
-    st.balloons()
 
-st.caption("Real automatic GPS detection • Instant location • Works worldwide on mobile")
+st.caption("Automatic real GPS location • Multi-language voice navigation • Works worldwide on mobile")
